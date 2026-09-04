@@ -43,6 +43,9 @@ const DOC_POOL: Array<[string, string]> = [
 ];
 
 export function seedReviews(count = 120): Review[] {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Refusing to seed synthetic KYC applicants: the seeder must never run in production.");
+  }
   const rand = lcg(20240517);
   const now = Date.now();
   const reviews: Review[] = [];
