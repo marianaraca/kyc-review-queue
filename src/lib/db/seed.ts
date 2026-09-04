@@ -89,6 +89,7 @@ export function seedReviews(count = 120): Review[] {
     reviews.push({
       ...base,
       risk_score: computeRiskScore(base),
+      risk_score_manual: false,
       audit_log_json: [
         {
           id: `audit_${i + 1}_1`,

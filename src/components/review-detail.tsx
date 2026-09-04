@@ -84,6 +84,28 @@ export function ReviewDetail({ id }: { id: string }) {
       })
     );
 
+  /** Assigning to a colleague can move the review out of the actor's queue. */
+  async function assign(assigned_reviewer: string | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      hydrate(
+        await apiFetch<Review>(`/api/kyc/reviews/${id}/assign`, {
+          method: "POST",
+          body: JSON.stringify({ assigned_reviewer }),
+        })
+      );
+      await apiFetch<Review>(`/api/kyc/reviews/${id}`).catch(() => {
+        router.push("/");
+      });
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runAmlCheck() {
     setBusy(true);
     try {
@@ -124,8 +146,11 @@ export function ReviewDetail({ id }: { id: string }) {
     );
   }
 
+  const role = session?.user.role;
   const decided = review.status === "approved" || review.status === "rejected";
-  const canDecide = session?.user.role !== undefined && !decided;
+  // Approvers sign off on decided cases; they do not edit case data.
+  const canEdit = role !== "approver";
+  const canDecide = role === "approver" ? true : !decided;
 
   return (
     <div className="space-y-4">
@@ -178,7 +203,7 @@ export function ReviewDetail({ id }: { id: string }) {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={busy}
+                disabled={busy || !canEdit}
                 onClick={() =>
                   run(async () => {
                     await apiFetch(`/api/kyc/reviews/${id}/documents`, {
@@ -207,13 +232,13 @@ export function ReviewDetail({ id }: { id: string }) {
                 <BoolSelect
                   label="Identity verified"
                   value={review.identity_verified}
-                  disabled={busy}
+                  disabled={busy || !canEdit}
                   onChange={(v) => patch({ identity_verified: v })}
                 />
                 <BoolSelect
                   label="Address verified"
                   value={review.address_verified}
-                  disabled={busy}
+                  disabled={busy || !canEdit}
                   onChange={(v) => patch({ address_verified: v })}
                 />
               </div>
@@ -228,11 +253,12 @@ export function ReviewDetail({ id }: { id: string }) {
                     max={10}
                     className="w-24"
                     value={riskScore}
+                    disabled={!canEdit}
                     onChange={(e) => setRiskScore(e.target.value)}
                   />
                   <Button
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || !canEdit}
                     onClick={() => patch({ risk_score: Number(riskScore) })}
                   >
                     Save score
@@ -245,10 +271,11 @@ export function ReviewDetail({ id }: { id: string }) {
                 <Textarea
                   id="notes"
                   value={notes}
+                  disabled={!canEdit}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Findings, follow-ups, escalation context..."
                 />
-                <Button variant="outline" disabled={busy} onClick={() => patch({ notes })}>
+                <Button variant="outline" disabled={busy || !canEdit} onClick={() => patch({ notes })}>
                   Save notes
                 </Button>
               </div>
@@ -257,9 +284,8 @@ export function ReviewDetail({ id }: { id: string }) {
                 <Label>Assign to colleague</Label>
                 <Select
                   value={review.assigned_reviewer ?? "unassigned"}
-                  onValueChange={(v) =>
-                    act("assign", { assigned_reviewer: v === "unassigned" ? null : v })
-                  }
+                  disabled={busy || !canEdit}
+                  onValueChange={(v) => assign(v === "unassigned" ? null : v)}
                 >
                   <SelectTrigger className="w-72">
                     <SelectValue />
@@ -288,7 +314,7 @@ export function ReviewDetail({ id }: { id: string }) {
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={busy || decided}
+                  disabled={busy || decided || !canEdit}
                   onClick={() => act("request-info", { note: "Requested additional documents." })}
                 >
                   Request additional info

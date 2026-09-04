@@ -18,5 +18,6 @@ export const PATCH = withApi(
     if (!review) return fail("Review not found", 404);
     return ok(review);
   },
-  { roles: ["admin", "reviewer", "approver"] }
+  // Approvers sign off on decided cases; they do not edit case data.
+  { roles: ["admin", "reviewer"] }
 );

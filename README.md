@@ -33,7 +33,8 @@ npm run dev                  # http://localhost:3000
   filters, sort on any column, 10 per page. Filtering/sorting/pagination all run
   in the repository layer, so the 120-record seed and a 1M-row table behave the same.
 - **Detail** (`/reviews/[id]`): applicant profile, mock documents, identity/address
-  verification toggles, auto-calculated risk score (1-10, overridable), notes,
+  verification toggles, auto-calculated risk score (1-10; a manual override sets
+  `risk_score_manual` and stops recomputation), notes,
   Approve / Reject / Request info / Assign, mock AML check, and a full audit log.
 - **RBAC**: enforced in the repository (`visibleTo`) and at the route level
   (`withApi({ roles })`), plus `middleware.ts` redirecting anonymous users to `/login`.
@@ -50,7 +51,7 @@ require a session; role restrictions are noted.
 | GET | `/api/kyc/reviews` | paginated list. Query: `page`, `page_size`, `status`, `reviewer` (email or `unassigned`), `search`, `from`, `to`, `sort`, `dir` |
 | POST | `/api/kyc/reviews` | create application (admin) |
 | GET | `/api/kyc/reviews/[id]` | single review |
-| PATCH | `/api/kyc/reviews/[id]` | update status/notes/verification flags/risk score/assignee |
+| PATCH | `/api/kyc/reviews/[id]` | update status/notes/verification flags/risk score/assignee (admin, reviewer) |
 | POST | `/api/kyc/reviews/[id]/approve` | approve + emit downstream workflow event |
 | POST | `/api/kyc/reviews/[id]/reject` | reject + emit downstream workflow event |
 | POST | `/api/kyc/reviews/[id]/request-info` | move to `info_requested` |
@@ -79,6 +80,7 @@ create table reviews (
   company           text not null,
   status            text not null check (status in ('pending','in_review','info_requested','approved','rejected')),
   risk_score        int  not null check (risk_score between 1 and 10),
+  risk_score_manual boolean not null default false,
   identity_verified boolean not null default false,
   address_verified  boolean not null default false,
   assigned_reviewer text,

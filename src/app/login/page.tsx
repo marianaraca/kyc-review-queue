@@ -69,7 +69,10 @@ function LoginForm() {
                 <button
                   type="button"
                   className="underline underline-offset-2"
-                  onClick={() => setEmail(u.email)}
+                  onClick={() => {
+                    setEmail(u.email);
+                    setPassword(u.password);
+                  }}
                 >
                   {u.email}
                 </button>

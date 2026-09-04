@@ -89,6 +89,7 @@ export const memoryRepository: ReviewsRepository = {
       phone: input.phone,
       company: input.company,
       status: "pending" as const,
+      risk_score_manual: false,
       identity_verified: false,
       address_verified: false,
       assigned_reviewer: input.assigned_reviewer ?? null,
@@ -125,9 +126,11 @@ export const memoryRepository: ReviewsRepository = {
       if (review[key] !== value) changes[key] = { from: review[key], to: value };
     }
     Object.assign(review, patch);
+    if (patch.risk_score !== undefined) review.risk_score_manual = true;
 
-    // Risk score stays auto-calculated unless the reviewer explicitly overrides it.
-    if (patch.risk_score === undefined) {
+    // Risk score is auto-calculated from the verification signals, but a manual
+    // override sticks until someone clears it.
+    if (patch.risk_score === undefined && !review.risk_score_manual) {
       const recomputed = computeRiskScore(review);
       if (recomputed !== review.risk_score) {
         changes.risk_score = { from: review.risk_score, to: recomputed };
@@ -153,7 +156,7 @@ export const memoryRepository: ReviewsRepository = {
     if (!review || !visibleTo(review, actor)) return null;
     const now = new Date().toISOString();
     review.documents_json.push({ ...doc, id: randomUUID(), uploaded_at: now });
-    review.risk_score = computeRiskScore(review);
+    if (!review.risk_score_manual) review.risk_score = computeRiskScore(review);
     review.updated_at = now;
     review.audit_log_json.push({
       id: randomUUID(),

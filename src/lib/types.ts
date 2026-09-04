@@ -41,6 +41,8 @@ export type Review = {
   company: string;
   status: ReviewStatus;
   risk_score: number;
+  /** True once a human overrides the auto-calculated score; stops recomputation. */
+  risk_score_manual: boolean;
   identity_verified: boolean;
   address_verified: boolean;
   assigned_reviewer: string | null;
