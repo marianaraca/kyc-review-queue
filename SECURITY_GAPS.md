@@ -99,6 +99,93 @@ for the IdP, AML provider, and document storage.
 
 ---
 
+# Platform vs. per-app: what you build once
+
+Every gap above is classified as either **[P] shared platform infrastructure** — build it once
+in a shared internal-tools platform (a golden Next.js template plus a handful of shared
+services) and every future internal app inherits it — or **[A] per-app compliance/domain work**,
+which has to be done again for each regulated app no matter how good the platform is.
+
+A few gaps are genuinely split: the *mechanism* is shared, the *content* is per-app (e.g. the
+encryption library is platform; deciding which KYC fields are sensitive is not). Those are
+marked **[P+A]** and appear in both lists, with only the per-app residual costed in the
+per-app table.
+
+## Shared platform infrastructure [P]
+
+**Combined effort to build as reusable infrastructure: ~14–18 engineer-weeks**
+(≈3–4 months for one engineer, ~6–8 weeks for a two-person platform pair), plus IdP and
+cloud vendor procurement running in parallel.
+
+That is more than the ~8–12 weeks quoted for fixing this one app, and deliberately so:
+reusable infrastructure costs roughly 1.5× a one-off because it needs configuration surfaces,
+documentation, versioning, and a migration path. It pays back on app #2.
+
+| Gap | What the platform provides |
+|-----|----------------------------|
+| 1.1, 1.2, 1.3, 1.6 | OIDC integration with the enterprise IdP, MFA/ACR enforcement, IdP-group → role mapping, and delegated device/anomaly risk — as one shared auth package. |
+| 1.4 | Server-side session records: revocation, forced logout, idle timeout, step-up re-auth as a reusable primitive. |
+| 1.5, 5.1, 5.3, 5.4 | Rate limiting, lockout, bot defence, upstream timeouts and circuit breakers at the gateway plus a shared per-actor limiter. |
+| 2.1, 2.4 | Secret manager integration, rotation runbook, KMS key hierarchy, boot-time secret assertions. |
+| 2.2 | Security headers, HSTS, CSP with nonces, cookie hardening — baked into the template's `next.config`. |
+| 2.3 [P+A] | Envelope-encryption library + blind-index helpers for searchable encrypted fields. |
+| 2.5 [P+A] | Document service: private bucket, signed URLs, AV scanning, MIME sniffing, per-object authz, download audit. |
+| 3.1, 3.2, 3.3, 3.4 | An append-only audit service: `INSERT`-only grants, `UPDATE`/`DELETE`-blocking triggers, hash chaining, WORM anchoring, read-access logging — plus the client library that makes it one call. |
+| 3.5 [P+A] | Redaction layer in the logger and a PII linter in CI. |
+| 3.6 | DB-generated timestamps and non-nullable actor FKs in the shared schema conventions. |
+| 4.1, 4.2 [P+A] | Retention engine (scheduled purge jobs driven by a per-app policy file) and crypto-shredding primitives that preserve audit metadata. |
+| 4.3 [P+A] | Field-classification annotations, masked projections, reveal-on-purpose with audit. |
+| 4.4, 4.5 | Managed Postgres baseline: PITR, encrypted backups, restore drills, residency-constrained regions and an approved-subprocessor list. |
+| 5.2 [P+A] | Export/volume anomaly detection and per-actor daily caps as a shared middleware. |
+| 5.5, 5.6 | Origin/`Sec-Fetch-Site` checks in the shared API wrapper; WAF, DDoS protection, private/VPN-only ingress. |
+| 6.3, 6.4 | Dependency scanning, minimum-release-age policy, SAST, secret scanning, SBOM, image scanning, branch protection — one reusable CI workflow. |
+| 7.1 | Default-deny authorization: the shared `withApi` requires an explicit policy argument (no `roles` = compile error, not "any authenticated user"), backed by RLS conventions. |
+| 7.3 | Sanitised error envelope in the shared wrapper. |
+| 7.6 | Error tracking, metrics, dashboards and alert templates (401/403 spikes, unusual mutation volume) wired up by the template. |
+| 7.7 | Environment separation, IaC modules, deployment pipeline, documented topology. |
+| 7.8 | Incident response plan, breach-notification runbook, on-call rotation covering all internal tools. |
+| 7.9 | Accessible shared component library, browser support matrix, session-timeout UX pattern. |
+
+## Per-app compliance & domain work [A]
+
+This is the irreducible cost of each new *regulated* app, assuming the platform above exists.
+For this app it totals roughly **6–9 engineer-weeks**, dominated by the AML integration and
+risk-model governance — neither of which any amount of shared infrastructure removes.
+
+| Gap | Why it can't be shared | Effort (per app) |
+|-----|------------------------|------------------|
+| 1.7 | Maker-checker for KYC decisions is a domain workflow: who may propose, who must counter-sign, what escalates. Every app's SoD model differs. | 3–5 days |
+| 2.3 [P+A] | Deciding *which* fields are sensitive enough for field-level encryption, and which need to stay searchable, is domain-specific. | 2–3 days |
+| 2.5 [P+A] | Document taxonomy (passport vs. business licence), who may view which type, and retention per type. | 3–5 days |
+| 3.5 [P+A] | Mapping this app's fields to redaction rules and asserting no PII in its log lines. | 1–2 days |
+| 4.1 [P+A] | The retention *schedule* itself: BSA/AMLD 5-year obligations vs. GDPR minimisation, per field class, with legal sign-off. | 1–1.5 weeks |
+| 4.2 [P+A] | DSAR handling for this data model: what a deletion means when the audit trail must survive. | 3–5 days |
+| 4.3 [P+A] | Classifying this app's fields and defining which role sees what unmasked. | 3–4 days |
+| 4.6 | Fail-fast guard so this app's mock repository/seeder can never run in production. | 0.5–1 day |
+| 5.2 [P+A] | Tuning volume thresholds to this queue's normal reviewer behaviour; a false-positive-heavy limit gets switched off. | 2–3 days |
+| 6.1, 6.2 | Each app owns its own dependency tree and upgrade cadence; the platform detects, it can't patch for you. Here: 2 critical + 5 high, and a beta auth dependency. | 4–7 days initially, then ongoing |
+| 6.5 | Authorization tests encode *this* app's rules (`visibleTo()`, per-route role lists). Not shareable, and the highest-value tests to have. | 3–5 days |
+| 7.2 | Redesigning "reviewers see all unassigned" into a real claiming model is a product decision about how the ops team works. | 2–3 days |
+| 7.4 | AML/sanctions provider selection, contract, screening evidence retention, periodic re-screening. Unavoidable, and the longest pole. | 2–4 weeks |
+| 7.5 | Risk-model governance: documented factors, reason codes on override, back-testing, regulator-facing explanation. | 1–2 weeks |
+| 7.8 [P+A] | Per-app addendum to the IR plan: data classes held, notification obligations, named owner. | 1–2 days |
+
+## What this means for the Power Apps comparison
+
+- **First app is expensive**: ~14–18 weeks of platform plus ~6–9 weeks of KYC-specific
+  compliance work. A low-code platform hands you a chunk of the [P] column on day one.
+- **Every app after that is cheap**: app #2 in a different domain inherits the whole [P]
+  column and pays only its own [A] residual — for a *non-regulated* internal tool that is
+  days, not weeks, because most of the [A] list here exists only because this app touches
+  KYC data.
+- **The [A] column is not a Devin-vs-Power-Apps question.** AML integration, retention
+  schedules, model governance and maker-checker design cost the same on any platform; a
+  low-code tool does not make them go away, and in some cases (audit tamper-evidence,
+  field-level encryption, data residency) it makes them harder because you cannot reach
+  under the abstraction.
+
+---
+
 ## What is *not* a gap
 
 Worth stating plainly, since the point of the prototype was the architecture:
