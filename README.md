@@ -11,6 +11,8 @@ is the shape you would ship.
 
 ## Setup
 
+Requires Node 18.17+ (Node 20 LTS recommended) and npm.
+
 ```bash
 npm install
 cp .env.example .env.local
