@@ -1,36 +1,140 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# KYC Review Queue
 
-## Getting Started
+Internal compliance tool for a fintech back office: a paginated KYC review queue,
+a review detail workspace with an audit trail, and role-scoped APIs. Built with
+Next.js 14 (App Router), TypeScript strict mode, Tailwind + shadcn/ui components,
+NextAuth v5, and zod-validated API routes.
 
-First, run the development server:
+It is a prototype: the datastore is an in-memory repository seeded with 120
+applications. Everything else - auth, RBAC, validation, logging, audit trail -
+is the shape you would ship.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local
+# set AUTH_SECRET / NEXTAUTH_SECRET to any random string: openssl rand -base64 32
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Demo accounts (password: `password`)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Email | Role | Sees |
+| --- | --- | --- |
+| `admin@fintech.example` | admin | every application |
+| `reviewer@fintech.example` | reviewer | assigned to them + the unassigned pool |
+| `reviewer2@fintech.example` | reviewer | assigned to them + the unassigned pool |
+| `approver@fintech.example` | approver | approved / rejected, for final sign-off |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Features
 
-## Learn More
+- **Queue** (`/`): server-side search (name/email), status + reviewer + date-range
+  filters, sort on any column, 10 per page. Filtering/sorting/pagination all run
+  in the repository layer, so the 120-record seed and a 1M-row table behave the same.
+- **Detail** (`/reviews/[id]`): applicant profile, mock documents, identity/address
+  verification toggles, auto-calculated risk score (1-10; a manual override sets
+  `risk_score_manual` and stops recomputation), notes,
+  Approve / Reject / Request info / Assign, mock AML check, and a full audit log.
+- **RBAC**: enforced in the repository (`visibleTo`) and at the route level
+  (`withApi({ roles })`), plus `middleware.ts` redirecting anonymous users to `/login`.
+- **Observability**: every API call emits one structured JSON log line
+  (`api.request` / `api.validation_error` / `api.unhandled_error`).
 
-To learn more about Next.js, take a look at the following resources:
+## API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+All responses use `{ success: boolean, data?: T, error?: string }`. All routes
+require a session; role restrictions are noted.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Method | Route | Notes |
+| --- | --- | --- |
+| GET | `/api/kyc/reviews` | paginated list. Query: `page`, `page_size`, `status`, `reviewer` (email or `unassigned`), `search`, `from`, `to`, `sort`, `dir` |
+| POST | `/api/kyc/reviews` | create application (admin) |
+| GET | `/api/kyc/reviews/[id]` | single review |
+| PATCH | `/api/kyc/reviews/[id]` | update status/notes/verification flags/risk score/assignee (admin, reviewer) |
+| POST | `/api/kyc/reviews/[id]/approve` | approve + emit downstream workflow event |
+| POST | `/api/kyc/reviews/[id]/reject` | reject + emit downstream workflow event |
+| POST | `/api/kyc/reviews/[id]/request-info` | move to `info_requested` |
+| POST | `/api/kyc/reviews/[id]/assign` | assign to a colleague |
+| GET/POST | `/api/kyc/reviews/[id]/documents` | list / mock-upload documents |
+| POST | `/api/integrations/aml-check` | scaffolded AML screening call |
+| GET | `/api/auth/session` | NextAuth session state |
 
-## Deploy on Vercel
+Example:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+curl -s 'http://localhost:3000/api/kyc/reviews?status=pending&sort=created_at&dir=desc' \
+  -H "Cookie: $SESSION_COOKIE" | jq
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Data model
+
+The in-memory rows are shaped exactly like the target Postgres table:
+
+```sql
+create table reviews (
+  id                text primary key,
+  applicant_name    text not null,
+  email             text not null,
+  phone             text not null,
+  company           text not null,
+  status            text not null check (status in ('pending','in_review','info_requested','approved','rejected')),
+  risk_score        int  not null check (risk_score between 1 and 10),
+  risk_score_manual boolean not null default false,
+  identity_verified boolean not null default false,
+  address_verified  boolean not null default false,
+  assigned_reviewer text,
+  notes             text not null default '',
+  documents_json    jsonb not null default '[]',
+  audit_log_json    jsonb not null default '[]',
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index on reviews (status, assigned_reviewer, created_at desc);
+```
+
+## Swapping the mock DB for Supabase
+
+The app touches the datastore through exactly one interface,
+`ReviewsRepository` (`src/lib/db/types.ts`): `list`, `get`, `create`, `update`,
+`addDocument`, `appendAudit`. No route or component imports the in-memory store
+directly - they import `db` from `src/lib/db/index.ts`.
+
+To go live:
+
+1. Create the `reviews` table above in Supabase.
+2. Add `src/lib/db/supabase.ts` implementing `ReviewsRepository` with
+   `@supabase/supabase-js` (or `@neondatabase/serverless` / `pg` for raw SQL).
+   The filter logic in `memory.ts` maps 1:1 onto SQL: `ilike` for search,
+   `eq` for status/reviewer, `gte/lte` for the date range, `order` + `range`
+   for sort and pagination.
+3. Change one line in `src/lib/db/index.ts`:
+   `export const db = process.env.DATABASE_URL ? supabaseRepository : memoryRepository;`
+4. Optionally push `visibleTo()` down into Postgres RLS policies - the role rules
+   are already written as row predicates.
+
+Nothing else changes: the API contract, zod schemas, audit log, and UI are
+storage-agnostic.
+
+## Future integration points
+
+- **AML / sanctions screening**: `src/app/api/integrations/aml-check/route.ts`
+  wraps `mockAmlCall`. Replace it with an authenticated fetch to
+  ComplyAdvantage / Sardine / Refinitiv; the result already lands in the audit log.
+- **Downstream approval workflow**: the approve/reject routes log
+  `workflow.kyc_approved` / `workflow.kyc_rejected` with the intended consumers
+  (ledger activation, applicant email, periodic rescreen). Swap the log for a
+  queue publish (SQS / Temporal / Inngest).
+- **Document storage**: `POST /documents` stores metadata only. Move to signed
+  uploads (S3 or Supabase Storage) and persist the object key on the same row.
+- **Identity provider**: `src/lib/users.ts` is a mock directory. Replace the
+  Credentials provider in `src/auth.ts` with Okta/WorkOS/Google; `role` is the
+  only claim the app depends on.
+
+## Adding the next internal tool
+
+The pattern is deliberately repetitive: a typed row + zod schemas, one
+repository interface, `withApi()` for auth/RBAC/logging/error mapping, a
+client-fetched table page, and a detail page. A second tool (vendor onboarding,
+dispute review, access requests) is the same five files with different fields -
+no per-user licensing, no record ceilings, no vendor runtime.
