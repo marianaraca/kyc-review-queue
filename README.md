@@ -108,10 +108,23 @@ To go live:
    The filter logic in `memory.ts` maps 1:1 onto SQL: `ilike` for search,
    `eq` for status/reviewer, `gte/lte` for the date range, `order` + `range`
    for sort and pagination.
-3. Change one line in `src/lib/db/index.ts`:
-   `export const db = process.env.DATABASE_URL ? supabaseRepository : memoryRepository;`
+3. Return it from the `postgres` branch of `loadRepository()` in
+   `src/lib/db/index.ts`, and set `KYC_DATASTORE=postgres` + `DATABASE_URL`.
 4. Optionally push `visibleTo()` down into Postgres RLS policies - the role rules
    are already written as row predicates.
+
+### Datastore guard
+
+The mock is opt-in, never a fallback. `resolveDatastore()` refuses to start when:
+
+- `KYC_DATASTORE=memory` is selected while `NODE_ENV=production` (a real deploy
+  would otherwise silently serve, and accept writes into, synthetic applicants),
+- `KYC_DATASTORE=postgres` is selected without a `DATABASE_URL`,
+- `KYC_DATASTORE` is set to anything else.
+
+`seedReviews()` throws in production for the same reason. Selection happens on
+first datastore use rather than at import time, so `next build` does not need
+production credentials.
 
 Nothing else changes: the API contract, zod schemas, audit log, and UI are
 storage-agnostic.

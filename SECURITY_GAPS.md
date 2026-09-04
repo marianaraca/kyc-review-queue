@@ -9,9 +9,10 @@ in its current form.** The architecture (repository seam, centralised `withApi` 
 row-level visibility, audit entries, zod validation) is a reasonable foundation, but every
 control below is either mocked, missing, or unenforced.
 
-Nothing here has been fixed — this is an assessment only. Effort estimates assume one
-engineer familiar with the stack and *include* the tests/docs/review needed to actually
-call the control done, not just a first commit.
+This started as an assessment only; items subsequently fixed are struck through and marked
+**FIXED** (so far: 4.6). Effort estimates assume one engineer familiar with the stack and
+*include* the tests/docs/review needed to actually call the control done, not just a first
+commit.
 
 Rough total to a defensible v1: **~8–12 engineer-weeks**, plus vendor procurement lead time
 for the IdP, AML provider, and document storage.
@@ -60,7 +61,7 @@ for the IdP, AML provider, and document storage.
 | 4.3 | No data classification, no field-level access control: every reviewer who can see a record sees full phone/email/document data. | No minimisation within the app; a reviewer only triaging status still gets the full PII payload. | 1 week (classification + masked projections + reveal-on-purpose with audit). |
 | 4.4 | No backup, restore, or backup-encryption story; the current store loses everything on restart. | No durability, no tested recovery, no RPO/RTO. | 3–5 days once on a real database (PITR, restore drill). |
 | 4.5 | No residency/subprocessor controls, no DPA-driven boundaries for where KYC data lives or which vendors touch it. | Cross-border transfer exposure and vendor risk are unmanaged. | 3–5 days of design + procurement/legal time. |
-| 4.6 | Seed data is synthetic (good) but there is no guard preventing the mock repository or the seeder from being enabled in a production build. | A misconfigured deploy silently serves or overwrites real data with mock behaviour. | 0.5–1 day (fail-fast on `NODE_ENV=production` without a real `DATABASE_URL`). |
+| 4.6 | ~~Seed data is synthetic (good) but there is no guard preventing the mock repository or the seeder from being enabled in a production build.~~ **FIXED** — `resolveDatastore()` in `src/lib/db/index.ts` makes the mock opt-in via `KYC_DATASTORE` and aborts startup when `NODE_ENV=production` selects `memory` or `postgres` is selected without `DATABASE_URL`; `seedReviews()` throws in production. | Was: a misconfigured deploy silently serves or overwrites real data with mock behaviour. | Done (was 0.5–1 day). |
 
 ## 5. Rate limiting & abuse protection
 
@@ -161,7 +162,7 @@ risk-model governance — neither of which any amount of shared infrastructure r
 | 4.1 [P+A] | The retention *schedule* itself: BSA/AMLD 5-year obligations vs. GDPR minimisation, per field class, with legal sign-off. | 1–1.5 weeks |
 | 4.2 [P+A] | DSAR handling for this data model: what a deletion means when the audit trail must survive. | 3–5 days |
 | 4.3 [P+A] | Classifying this app's fields and defining which role sees what unmasked. | 3–4 days |
-| 4.6 | Fail-fast guard so this app's mock repository/seeder can never run in production. | 0.5–1 day |
+| 4.6 | ~~Fail-fast guard so this app's mock repository/seeder can never run in production.~~ **FIXED** | Done (was 0.5–1 day) |
 | 5.2 [P+A] | Tuning volume thresholds to this queue's normal reviewer behaviour; a false-positive-heavy limit gets switched off. | 2–3 days |
 | 6.1, 6.2 | Each app owns its own dependency tree and upgrade cadence; the platform detects, it can't patch for you. Here: 2 critical + 5 high, and a beta auth dependency. | 4–7 days initially, then ongoing |
 | 6.5 | Authorization tests encode *this* app's rules (`visibleTo()`, per-route role lists). Not shareable, and the highest-value tests to have. | 3–5 days |
